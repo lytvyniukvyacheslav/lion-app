@@ -60,6 +60,45 @@
 .premiumSpin:disabled{opacity:.45}
 .premiumStatus{text-align:center;color:#aeb9cf;font-size:11px;margin-top:8px}
 
+
+/* V9.1 Rocket visual — closer to approved space mockup */
+.rocketBox{padding:14px!important;background:#0d1630!important;border-color:#5b35ba!important}
+.rocketStage{
+  height:356px!important;
+  border-radius:24px!important;
+  border:1px solid #6b36d6!important;
+  background:
+    radial-gradient(circle at 47% 60%,rgba(12,117,255,.18),transparent 24%),
+    linear-gradient(180deg,#050922 0%,#060a20 50%,#040817 100%)!important;
+  box-shadow:inset 0 0 48px rgba(51,68,180,.08),0 0 0 1px rgba(114,55,234,.08)!important;
+}
+.rocketStage::before{
+  content:'';position:absolute;z-index:0;width:190px;height:190px;border-radius:50%;left:-83px;bottom:61px;
+  background:
+    radial-gradient(circle at 37% 31%,rgba(194,131,255,.95) 0 3%,rgba(128,60,255,.96) 22%,#4c1d95 49%,#1d0b4f 72%,#090b2b 100%);
+  box-shadow:0 0 42px rgba(108,48,255,.42),inset -24px -18px 34px rgba(4,6,30,.62);
+  opacity:.96;
+}
+.rocketStage::after{
+  content:'';position:absolute;z-index:0;width:106px;height:106px;border-radius:50%;right:20px;top:27px;
+  background:
+    radial-gradient(circle at 34% 30%,#315cff 0 5%,#173fbe 28%,#10266f 60%,#070d30 100%);
+  box-shadow:0 0 32px rgba(49,92,255,.42),inset -17px -14px 28px rgba(2,4,24,.65);
+  opacity:.98;
+}
+.rocketGrid{z-index:1!important;opacity:.72!important;background-image:linear-gradient(rgba(74,96,176,.15) 1px,transparent 1px),linear-gradient(90deg,rgba(74,96,176,.15) 1px,transparent 1px)!important;background-size:42px 42px!important;mask-image:linear-gradient(to bottom,transparent 4%,#000 24%,#000 100%)}
+.rocketGrid::after{content:'';position:absolute;width:38px;height:38px;border-radius:50%;right:8px;top:112px;background:radial-gradient(circle at 35% 30%,#2c45a2,#10194f 58%,#05091f 100%);box-shadow:0 0 18px rgba(52,76,185,.22)}
+.rocketLine{display:none!important}
+.rocketCurve{position:absolute;z-index:2;left:0;right:0;bottom:42px;width:100%;height:72%;overflow:visible;pointer-events:none}
+.rocketCurve path{fill:none;stroke:#c44cff;stroke-width:1.55;vector-effect:non-scaling-stroke;filter:url(#rocketGlow);stroke-linecap:round;drop-shadow:0 0 8px #7c3cff}
+.multiplier{z-index:5!important;top:24px!important;left:22px!important;font-size:58px!important;letter-spacing:-2px!important;color:#ff3f7c!important;text-shadow:0 0 18px rgba(255,63,124,.32)!important}
+.rocketEmoji{z-index:5!important;font-size:76px!important;filter:drop-shadow(0 0 16px rgba(46,164,255,.85)) drop-shadow(0 8px 16px rgba(0,0,0,.35))!important}
+.rocketMessage{z-index:6!important;bottom:47px!important;font-size:15px!important;text-shadow:0 2px 8px rgba(0,0,0,.85)}
+.rocketAxis{z-index:6!important;left:10px!important;right:10px!important;bottom:9px!important}
+.rocketAxis span{font-size:8px!important;color:#b8c6e9!important;font-weight:800!important}
+.rocketAxis span:before{height:7px!important;background:#9eb0d8!important}
+.betRow{margin-top:14px!important}.betInput{height:54px!important;border-radius:16px!important;background:#090f23!important;border-color:#5631b7!important;font-size:18px!important}.maxBtn{min-width:78px!important;border-radius:16px!important;background:#10172e!important;border-color:#7c3cff!important}
+.rocketActions{gap:10px!important}.startRocket,.cashout{min-height:70px!important;border-radius:20px!important;font-size:17px!important}.startRocket{background:linear-gradient(110deg,#8743ff,#308cff)!important}.cashout{background:#0e9f58!important}.cashout:disabled{background:#176c4a!important;opacity:.7!important}
 </style>
 </head>
 <body>
@@ -101,7 +140,7 @@
   </div>
   <div class="rocketBox" id="rocketBox">
     <div class="rocketStage">
-      <div class="rocketGrid"></div><div class="rocketLine"></div>
+      <div class="rocketGrid"></div><div class="rocketLine"></div><svg class="rocketCurve" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><defs><filter id="rocketGlow"><feGaussianBlur stdDeviation="1.2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M 0 83 C 27 81, 66 72, 100 49"/></svg>
       <div class="multiplier" id="rocketMult">x1.00</div>
       <div class="rocketEmoji" id="rocketEmoji">🚀</div>
       <div class="rocketMessage" id="rocketMsg">Выберите ставку</div>
