@@ -19,6 +19,12 @@ const TOPUPS = new Set([10, 50, 100, 200, 500, 1000]);
 const ROCKET_GROWTH = 0.18;
 const MAX_ROCKET_BET = 10000;
 
+const TASK_REWARD = 5;
+const TASKS = {
+  channel: { chatId: '@Liongiftsnews', field: 'task_channel' },
+  chat: { chatId: '@Liongiftchat', field: 'task_chat' },
+};
+
 // Exactly 100% total, as requested.
 const PRIZES = [
   { slot: 0, key: 'none', name: 'Ничего', price: 0, chance: 16, emoji: 'ZERO' },
@@ -279,8 +285,10 @@ async function getState(userId) {
     'rocket',
     'betHistory',
     'dailyLastOpened',
+    'task_channel',
+    'task_chat',
   ]);
-  const [balance, opened, sold, inventoryRaw, pendingRaw, withdrawalsRaw, rocketRaw, betHistoryRaw, dailyLastOpenedRaw] = Array.isArray(values) ? values : [];
+  const [balance, opened, sold, inventoryRaw, pendingRaw, withdrawalsRaw, rocketRaw, betHistoryRaw, dailyLastOpenedRaw, taskChannelRaw, taskChatRaw] = Array.isArray(values) ? values : [];
   let inventory = [];
   let pending = null;
   let withdrawals = [];
@@ -304,7 +312,56 @@ async function getState(userId) {
     betHistory: Array.isArray(betHistory) ? betHistory : [],
     dailyNextAt,
     dailyAvailable: !dailyNextAt || Date.now() >= dailyNextAt,
+    tasks: {
+      channel: String(taskChannelRaw || '') === '1',
+      chat: String(taskChatRaw || '') === '1',
+    },
   };
+}
+
+function isTelegramMember(member) {
+  const status = String(member?.status || '');
+  if (['creator', 'administrator', 'member'].includes(status)) return true;
+  if (status === 'restricted') return member?.is_member !== false;
+  return false;
+}
+
+async function claimTask(userId, taskId) {
+  const task = TASKS[taskId];
+  if (!task) return { error: 'BAD_TASK' };
+
+  let member;
+  try {
+    member = await telegram('getChatMember', {
+      chat_id: task.chatId,
+      user_id: userId,
+    });
+  } catch (error) {
+    console.error('Task membership check failed:', taskId, error);
+    return { error: 'TASK_CHECK_FAILED' };
+  }
+
+  if (!isTelegramMember(member)) {
+    return { error: 'NOT_SUBSCRIBED' };
+  }
+
+  const script = `
+    local claimed = redis.call('HGET', KEYS[1], ARGV[1])
+    if claimed == '1' then
+      local bal = tonumber(redis.call('HGET', KEYS[1], 'balance') or '0')
+      return cjson.encode({already=true, balance=bal})
+    end
+    redis.call('HSET', KEYS[1], ARGV[1], '1')
+    local bal = tonumber(redis.call('HINCRBY', KEYS[1], 'balance', tonumber(ARGV[2])))
+    return cjson.encode({already=false, balance=bal})
+  `;
+  const raw = await redis([
+    'EVAL', script, 1,
+    userKey(userId),
+    task.field,
+    TASK_REWARD,
+  ]);
+  return JSON.parse(raw);
 }
 
 async function creditSuccessfulPayment(payment, fromUserId) {
@@ -719,6 +776,20 @@ async function handleAction(request, action) {
       prices: [{ label: `${amount} ⭐`, amount }],
     });
     return reply({ invoiceUrl });
+  }
+
+  if (action === 'check-task') {
+    if (request.method !== 'POST') return reply({ error: 'METHOD' }, 405);
+    const body = await request.json().catch(() => ({}));
+    const taskId = String(body.task || '');
+    const result = await claimTask(userId, taskId);
+
+    if (result.error === 'BAD_TASK') return reply({ error: 'BAD_TASK' }, 400);
+    if (result.error === 'NOT_SUBSCRIBED') return reply({ error: 'NOT_SUBSCRIBED' }, 409);
+    if (result.error === 'TASK_CHECK_FAILED') return reply({ error: 'TASK_CHECK_FAILED' }, 502);
+
+    const state = await getState(userId);
+    return reply({ ...state, taskAlready: Boolean(result.already), task: taskId, reward: TASK_REWARD });
   }
 
   if (action === 'open-case') {
