@@ -18,6 +18,19 @@ const DAILY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const TOPUPS = new Set([10, 50, 100, 200, 500, 1000]);
 const ROCKET_GROWTH = 0.18;
 const MAX_ROCKET_BET = 10000;
+const PREMIUM_ROULETTE_COST = 70;
+const MINES_CELLS = 9;
+const MAX_MINES_BET = 10000;
+
+const PREMIUM_PRIZES = [
+  { slot: 0, key: 'premium-cake', name: 'Торт', price: 50, chance: 22, emoji: '🎂' },
+  { slot: 1, key: 'premium-champagne', name: 'Шампанское', price: 50, chance: 22, emoji: '🍾' },
+  { slot: 2, key: 'premium-bouquet', name: 'Букет', price: 50, chance: 22, emoji: '💐' },
+  { slot: 3, key: 'premium-zero', name: 'Ничего', price: 0, chance: 12, emoji: 'ZERO', nothing: true },
+  { slot: 4, key: 'premium-diamond', name: 'Алмаз', price: 100, chance: 10, emoji: '💎' },
+  { slot: 5, key: 'premium-trophy', name: 'Кубок', price: 100, chance: 10, emoji: '🏆' },
+  { slot: 6, key: 'premium-nft', name: 'Random NFT', price: 0, chance: 2, emoji: '🖼️', withdrawOnly: true },
+];
 
 const TASK_REWARD = 5;
 const TASKS = {
@@ -239,6 +252,194 @@ function pickDailyPrize() {
   return { id: null, key: 'daily-star-1', type: 'stars', name: '1 звезда', price: 1, dailyStars: 1, emoji: '⭐', creditOnly: true, nothing: false };
 }
 
+
+function pickPremiumPrize() {
+  const r = secureRandom() * 100;
+  let sum = 0;
+  for (const prize of PREMIUM_PRIZES) {
+    sum += prize.chance;
+    if (r < sum) {
+      return {
+        id: prize.nothing ? null : randomBytes(8).toString('hex'),
+        slot: prize.slot,
+        key: prize.key,
+        name: prize.name,
+        price: Number(prize.price || 0),
+        emoji: prize.emoji,
+        nothing: Boolean(prize.nothing),
+        withdrawOnly: Boolean(prize.withdrawOnly),
+        source: 'premium-roulette',
+      };
+    }
+  }
+  return { id: null, slot: 3, key: 'premium-zero', name: 'Ничего', price: 0, emoji: 'ZERO', nothing: true, source: 'premium-roulette' };
+}
+
+function minesMultiplier(mineCount, openedCount) {
+  mineCount = Number(mineCount);
+  openedCount = Number(openedCount);
+  if (!Number.isInteger(mineCount) || mineCount < 1 || mineCount > 8 || openedCount <= 0) return 1;
+  let mult = 1;
+  for (let i = 0; i < openedCount; i++) {
+    mult *= (MINES_CELLS - i) / (MINES_CELLS - mineCount - i);
+  }
+  return Math.floor(mult * 100) / 100;
+}
+
+function generateMinePositions(mineCount) {
+  const cells = Array.from({ length: MINES_CELLS }, (_, i) => i);
+  for (let i = cells.length - 1; i > 0; i--) {
+    const j = Math.floor(secureRandom() * (i + 1));
+    [cells[i], cells[j]] = [cells[j], cells[i]];
+  }
+  return cells.slice(0, mineCount).sort((a, b) => a - b);
+}
+
+function safeMines(round) {
+  if (!round) return null;
+  const opened = Array.isArray(round.opened) ? round.opened.map(Number) : [];
+  const out = {
+    id: String(round.id || ''),
+    bet: Number(round.bet || 0),
+    mineCount: Number(round.mineCount || 1),
+    opened,
+    status: String(round.status || 'running'),
+    multiplier: minesMultiplier(round.mineCount, opened.length),
+  };
+  if (out.status === 'lost') {
+    out.hit = Number(round.hit);
+    out.mines = Array.isArray(round.minePositions) ? round.minePositions.map(Number) : [];
+  }
+  if (out.status === 'cashedout') {
+    out.payout = Number(round.payout || 0);
+    out.cashoutMultiplier = Number(round.cashoutMultiplier || out.multiplier);
+  }
+  return out;
+}
+
+async function minesStart(userId, bet, mineCount) {
+  bet = Number(bet);
+  mineCount = Number(mineCount);
+  if (!Number.isInteger(bet) || bet < 1 || bet > MAX_MINES_BET) return { error: 'BAD_BET' };
+  if (!Number.isInteger(mineCount) || mineCount < 1 || mineCount > 8) return { error: 'BAD_MINES' };
+
+  const round = {
+    id: randomBytes(8).toString('hex'),
+    bet,
+    mineCount,
+    minePositions: generateMinePositions(mineCount),
+    opened: [],
+    status: 'running',
+    startedAt: Date.now(),
+  };
+
+  const script = `
+    local bal = tonumber(redis.call('HGET', KEYS[1], 'balance') or '0')
+    local oldRaw = redis.call('HGET', KEYS[1], 'mines')
+    if oldRaw and oldRaw ~= '' then
+      local old = cjson.decode(oldRaw)
+      if old.status == 'running' then return cjson.encode({code='ACTIVE'}) end
+    end
+    if bal < tonumber(ARGV[1]) then return cjson.encode({code='NO_BALANCE', balance=bal}) end
+    redis.call('HINCRBY', KEYS[1], 'balance', -tonumber(ARGV[1]))
+    redis.call('HSET', KEYS[1], 'mines', ARGV[2])
+    return cjson.encode({code='OK', balance=bal-tonumber(ARGV[1])})
+  `;
+  const raw = await redis(['EVAL', script, 1, userKey(userId), bet, JSON.stringify(round)]);
+  const result = JSON.parse(raw);
+  if (result.code === 'ACTIVE') return { error: 'MINES_ACTIVE' };
+  if (result.code === 'NO_BALANCE') return { error: 'INSUFFICIENT_BALANCE', balance: Number(result.balance || 0) };
+  return { balance: Number(result.balance || 0), mines: safeMines(round) };
+}
+
+async function minesOpen(userId, roundId, cell) {
+  cell = Number(cell);
+  if (!/^[a-f0-9]{16}$/.test(String(roundId || ''))) return { error: 'BAD_ROUND' };
+  if (!Number.isInteger(cell) || cell < 0 || cell >= MINES_CELLS) return { error: 'BAD_CELL' };
+  const now = Date.now();
+
+  const script = `
+    local raw = redis.call('HGET', KEYS[1], 'mines')
+    if not raw or raw == '' then return cjson.encode({code='NO_ROUND'}) end
+    local r = cjson.decode(raw)
+    if r.id ~= ARGV[1] then return cjson.encode({code='BAD_ROUND'}) end
+    if r.status ~= 'running' then return cjson.encode({code='NOT_RUNNING', round=r}) end
+    local cell = tonumber(ARGV[2])
+    for _,v in ipairs(r.opened or {}) do
+      if tonumber(v) == cell then return cjson.encode({code='ALREADY', round=r}) end
+    end
+    local isMine = false
+    for _,v in ipairs(r.minePositions or {}) do
+      if tonumber(v) == cell then isMine = true break end
+    end
+    if isMine then
+      r.status = 'lost'
+      r.hit = cell
+      r.finishedAt = tonumber(ARGV[3])
+      local histRaw = redis.call('HGET', KEYS[1], 'betHistory') or '[]'
+      local hist = cjson.decode(histRaw)
+      table.insert(hist, 1, {
+        game='mines', outcome='loss', bet=tonumber(r.bet), mineCount=tonumber(r.mineCount),
+        opened=#(r.opened or {}), multiplier=0, payout=0, profit=-tonumber(r.bet),
+        startedAt=tonumber(r.startedAt), finishedAt=tonumber(ARGV[3])
+      })
+      if #hist > 50 then table.remove(hist) end
+      redis.call('HSET', KEYS[1], 'betHistory', cjson.encode(hist))
+    else
+      table.insert(r.opened, cell)
+    end
+    redis.call('HSET', KEYS[1], 'mines', cjson.encode(r))
+    return cjson.encode({code=isMine and 'MINE' or 'SAFE', round=r})
+  `;
+  const raw = await redis(['EVAL', script, 1, userKey(userId), roundId, cell, now]);
+  const result = JSON.parse(raw);
+  if (result.round) result.mines = safeMines(result.round);
+  return result;
+}
+
+async function minesCashout(userId, roundId) {
+  const now = Date.now();
+  const script = `
+    local raw = redis.call('HGET', KEYS[1], 'mines')
+    if not raw or raw == '' then return cjson.encode({code='NO_ROUND'}) end
+    local r = cjson.decode(raw)
+    if r.id ~= ARGV[1] then return cjson.encode({code='BAD_ROUND'}) end
+    if r.status ~= 'running' then return cjson.encode({code='NOT_RUNNING'}) end
+    local opened = #(r.opened or {})
+    if opened < 1 then return cjson.encode({code='OPEN_FIRST'}) end
+
+    local mult = 1
+    for i=0,opened-1 do
+      mult = mult * ((9-i) / (9-tonumber(r.mineCount)-i))
+    end
+    mult = math.floor(mult * 100) / 100
+    local payout = math.floor(tonumber(r.bet) * mult)
+    redis.call('HINCRBY', KEYS[1], 'balance', payout)
+    r.status = 'cashedout'
+    r.cashoutMultiplier = mult
+    r.payout = payout
+    r.finishedAt = tonumber(ARGV[2])
+    redis.call('HSET', KEYS[1], 'mines', cjson.encode(r))
+
+    local histRaw = redis.call('HGET', KEYS[1], 'betHistory') or '[]'
+    local hist = cjson.decode(histRaw)
+    table.insert(hist, 1, {
+      game='mines', outcome='win', bet=tonumber(r.bet), mineCount=tonumber(r.mineCount),
+      opened=opened, multiplier=mult, payout=payout, profit=payout-tonumber(r.bet),
+      startedAt=tonumber(r.startedAt), finishedAt=tonumber(ARGV[2])
+    })
+    if #hist > 50 then table.remove(hist) end
+    redis.call('HSET', KEYS[1], 'betHistory', cjson.encode(hist))
+    local bal = tonumber(redis.call('HGET', KEYS[1], 'balance') or '0')
+    return cjson.encode({code='OK', balance=bal, multiplier=mult, payout=payout, round=r})
+  `;
+  const raw = await redis(['EVAL', script, 1, userKey(userId), roundId, now]);
+  const result = JSON.parse(raw);
+  if (result.round) result.mines = safeMines(result.round);
+  delete result.round;
+  return result;
+}
+
 function generateCrashAt() {
   const u = secureRandom();
   if (u < 0.08) return 1.0; // instant crash is possible
@@ -287,13 +488,15 @@ async function getState(userId) {
     'dailyLastOpened',
     'task_channel',
     'task_chat',
+    'mines',
   ]);
-  const [balance, opened, sold, inventoryRaw, pendingRaw, withdrawalsRaw, rocketRaw, betHistoryRaw, dailyLastOpenedRaw, taskChannelRaw, taskChatRaw] = Array.isArray(values) ? values : [];
+  const [balance, opened, sold, inventoryRaw, pendingRaw, withdrawalsRaw, rocketRaw, betHistoryRaw, dailyLastOpenedRaw, taskChannelRaw, taskChatRaw, minesRaw] = Array.isArray(values) ? values : [];
   let inventory = [];
   let pending = null;
   let withdrawals = [];
   let rocket = null;
   let betHistory = [];
+  let mines = null;
   const dailyLastOpened = Number(dailyLastOpenedRaw || 0);
   const dailyNextAt = dailyLastOpened > 0 ? dailyLastOpened + DAILY_COOLDOWN_MS : 0;
   try { inventory = inventoryRaw ? JSON.parse(inventoryRaw) : []; } catch {}
@@ -301,6 +504,7 @@ async function getState(userId) {
   try { withdrawals = withdrawalsRaw ? JSON.parse(withdrawalsRaw) : []; } catch {}
   try { rocket = rocketRaw ? JSON.parse(rocketRaw) : null; } catch {}
   try { betHistory = betHistoryRaw ? JSON.parse(betHistoryRaw) : []; } catch {}
+  try { mines = minesRaw ? JSON.parse(minesRaw) : null; } catch {}
   return {
     balance: Number(balance || 0),
     opened: Number(opened || 0),
@@ -309,6 +513,7 @@ async function getState(userId) {
     pending,
     withdrawals: Array.isArray(withdrawals) ? withdrawals : [],
     rocket: safeRocket(rocket),
+    mines: safeMines(mines),
     betHistory: Array.isArray(betHistory) ? betHistory : [],
     dailyNextAt,
     dailyAvailable: !dailyNextAt || Date.now() >= dailyNextAt,
@@ -927,6 +1132,61 @@ async function handleAction(request, action) {
     const req = await createWithdrawal(user, itemId, request);
     if (!req) return reply({ error: 'ITEM_NOT_FOUND' }, 404);
     return reply(await getState(userId));
+  }
+
+
+  if (action === 'premium-roulette') {
+    if (request.method !== 'POST') return reply({ error: 'METHOD' }, 405);
+    const prize = pickPremiumPrize();
+    const prizeJson = JSON.stringify(prize);
+    const script = `
+      local bal = tonumber(redis.call('HGET', KEYS[1], 'balance') or '0')
+      local pending = redis.call('HGET', KEYS[1], 'pending')
+      if pending and pending ~= '' then return -2 end
+      if bal < tonumber(ARGV[1]) then return -1 end
+      redis.call('HINCRBY', KEYS[1], 'balance', -tonumber(ARGV[1]))
+      redis.call('HINCRBY', KEYS[1], 'opened', 1)
+      if ARGV[3] == '1' then
+        redis.call('HDEL', KEYS[1], 'pending')
+      else
+        redis.call('HSET', KEYS[1], 'pending', ARGV[2])
+      end
+      return bal - tonumber(ARGV[1])
+    `;
+    const result = Number(await redis([
+      'EVAL', script, 1, userKey(userId), PREMIUM_ROULETTE_COST, prizeJson, prize.nothing ? '1' : '0',
+    ]));
+    if (result === -1) return reply({ error: 'INSUFFICIENT_BALANCE', balance: (await getState(userId)).balance }, 402);
+    if (result === -2) return reply({ error: 'PENDING_PRIZE' }, 409);
+    return reply({ prize, balance: result });
+  }
+
+  if (action === 'mines-start') {
+    if (request.method !== 'POST') return reply({ error: 'METHOD' }, 405);
+    const body = await request.json().catch(() => ({}));
+    const result = await minesStart(userId, Number(body.bet), Number(body.mines));
+    if (result.error === 'BAD_BET' || result.error === 'BAD_MINES') return reply({ error: result.error }, 400);
+    if (result.error === 'INSUFFICIENT_BALANCE') return reply({ error: result.error, balance: result.balance }, 402);
+    if (result.error) return reply({ error: result.error }, 409);
+    return reply(result);
+  }
+
+  if (action === 'mines-open') {
+    if (request.method !== 'POST') return reply({ error: 'METHOD' }, 405);
+    const body = await request.json().catch(() => ({}));
+    const result = await minesOpen(userId, String(body.roundId || ''), Number(body.cell));
+    if (result.error) return reply({ error: result.error }, 400);
+    if (result.code === 'MINE') return reply({ code: 'MINE', mines: result.mines });
+    if (result.code === 'SAFE' || result.code === 'ALREADY') return reply({ code: result.code, mines: result.mines });
+    return reply({ error: result.code || 'MINES_ERROR' }, 409);
+  }
+
+  if (action === 'mines-cashout') {
+    if (request.method !== 'POST') return reply({ error: 'METHOD' }, 405);
+    const body = await request.json().catch(() => ({}));
+    const result = await minesCashout(userId, String(body.roundId || ''));
+    if (result.code === 'OK') return reply(result);
+    return reply({ error: result.code || 'MINES_ERROR' }, 409);
   }
 
   if (action === 'rocket-start') {
