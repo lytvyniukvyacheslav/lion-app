@@ -14,7 +14,8 @@ const REDIS_TOKEN =
   '';
 
 const CASE_COST = 30;
-const TOPUPS = new Set([50, 100, 200, 500, 1000]);
+const DAILY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const TOPUPS = new Set([10, 50, 100, 200, 500, 1000]);
 const ROCKET_GROWTH = 0.18;
 const MAX_ROCKET_BET = 10000;
 
@@ -28,6 +29,15 @@ const PRIZES = [
   { slot: 5, key: 'cake', name: 'Торт', price: 50, chance: 5, emoji: '🎂' },
   { slot: 6, key: 'trophy', name: 'Кубок', price: 100, chance: 5, emoji: '🏆' },
   { slot: 7, key: 'torch', name: 'Факел', price: 385, chance: 1, emoji: '🔥' },
+];
+
+// Free daily case: always gives a reward; total = 100%.
+const DAILY_PRIZES = [
+  { key: 'daily-star-1', type: 'stars', name: '1 звезда', amount: 1, chance: 37.5, emoji: '⭐' },
+  { key: 'daily-star-2', type: 'stars', name: '2 звезды', amount: 2, chance: 25, emoji: '⭐' },
+  { key: 'daily-star-3', type: 'stars', name: '3 звезды', amount: 3, chance: 18.75, emoji: '⭐' },
+  { key: 'daily-star-4', type: 'stars', name: '4 звезды', amount: 4, chance: 12.5, emoji: '⭐' },
+  { key: 'daily-bear', type: 'gift', name: 'Мишка', price: 15, chance: 6.25, emoji: '🧸' },
 ];
 
 function reply(data, status = 200) {
@@ -154,7 +164,7 @@ async function ensureWebhook(request) {
 }
 
 function parsePayload(payload) {
-  const match = /^lion:(\d+):(50|100|200|500|1000):([a-f0-9]{16})$/.exec(String(payload || ''));
+  const match = /^lion:(\d+):(10|50|100|200|500|1000):([a-f0-9]{16})$/.exec(String(payload || ''));
   if (!match) return null;
   return {
     userId: Number(match[1]),
@@ -187,6 +197,40 @@ function pickPrize() {
     }
   }
   return { id: null, slot: 0, key: 'none', name: 'Ничего', price: 0, emoji: 'ZERO', nothing: true };
+}
+
+function pickDailyPrize() {
+  const r = secureRandom() * 100;
+  let sum = 0;
+  for (const reward of DAILY_PRIZES) {
+    sum += reward.chance;
+    if (r < sum) {
+      if (reward.type === 'stars') {
+        return {
+          id: null,
+          key: reward.key,
+          type: 'stars',
+          name: reward.name,
+          price: reward.amount,
+          dailyStars: reward.amount,
+          emoji: reward.emoji,
+          creditOnly: true,
+          nothing: false,
+        };
+      }
+      return {
+        id: randomBytes(8).toString('hex'),
+        key: reward.key,
+        type: 'gift',
+        name: reward.name,
+        price: reward.price,
+        emoji: reward.emoji,
+        creditOnly: false,
+        nothing: false,
+      };
+    }
+  }
+  return { id: null, key: 'daily-star-1', type: 'stars', name: '1 звезда', price: 1, dailyStars: 1, emoji: '⭐', creditOnly: true, nothing: false };
 }
 
 function generateCrashAt() {
@@ -234,13 +278,16 @@ async function getState(userId) {
     'withdrawals',
     'rocket',
     'betHistory',
+    'dailyLastOpened',
   ]);
-  const [balance, opened, sold, inventoryRaw, pendingRaw, withdrawalsRaw, rocketRaw, betHistoryRaw] = Array.isArray(values) ? values : [];
+  const [balance, opened, sold, inventoryRaw, pendingRaw, withdrawalsRaw, rocketRaw, betHistoryRaw, dailyLastOpenedRaw] = Array.isArray(values) ? values : [];
   let inventory = [];
   let pending = null;
   let withdrawals = [];
   let rocket = null;
   let betHistory = [];
+  const dailyLastOpened = Number(dailyLastOpenedRaw || 0);
+  const dailyNextAt = dailyLastOpened > 0 ? dailyLastOpened + DAILY_COOLDOWN_MS : 0;
   try { inventory = inventoryRaw ? JSON.parse(inventoryRaw) : []; } catch {}
   try { pending = pendingRaw ? JSON.parse(pendingRaw) : null; } catch {}
   try { withdrawals = withdrawalsRaw ? JSON.parse(withdrawalsRaw) : []; } catch {}
@@ -255,6 +302,8 @@ async function getState(userId) {
     withdrawals: Array.isArray(withdrawals) ? withdrawals : [],
     rocket: safeRocket(rocket),
     betHistory: Array.isArray(betHistory) ? betHistory : [],
+    dailyNextAt,
+    dailyAvailable: !dailyNextAt || Date.now() >= dailyNextAt,
   };
 }
 
@@ -695,6 +744,52 @@ async function handleAction(request, action) {
     if (result === -1) return reply({ error: 'INSUFFICIENT_BALANCE', balance: (await getState(userId)).balance }, 402);
     if (result === -2) return reply({ error: 'PENDING_PRIZE' }, 409);
     return reply({ prize, balance: result });
+  }
+
+  if (action === 'daily-case') {
+    const prize = pickDailyPrize();
+    const prizeJson = JSON.stringify(prize);
+    const now = Date.now();
+    const rewardType = prize.type === 'stars' ? 'stars' : 'gift';
+    const rewardAmount = Number(prize.dailyStars || 0);
+    const script = `
+      local now = tonumber(ARGV[1])
+      local cooldown = tonumber(ARGV[2])
+      local rewardType = ARGV[3]
+      local rewardAmount = tonumber(ARGV[4]) or 0
+      local prizeJson = ARGV[5]
+
+      local last = tonumber(redis.call('HGET', KEYS[1], 'dailyLastOpened') or '0')
+      if last > 0 and (now - last) < cooldown then
+        return cjson.encode({code='COOLDOWN', nextAt=last+cooldown})
+      end
+
+      if rewardType == 'gift' then
+        local pending = redis.call('HGET', KEYS[1], 'pending')
+        if pending and pending ~= '' then
+          return cjson.encode({code='PENDING_PRIZE'})
+        end
+      end
+
+      redis.call('HSET', KEYS[1], 'dailyLastOpened', now)
+      redis.call('HINCRBY', KEYS[1], 'opened', 1)
+
+      if rewardType == 'stars' then
+        redis.call('HINCRBY', KEYS[1], 'balance', rewardAmount)
+      else
+        redis.call('HSET', KEYS[1], 'pending', prizeJson)
+      end
+
+      local bal = tonumber(redis.call('HGET', KEYS[1], 'balance') or '0')
+      return cjson.encode({code='OK', balance=bal, nextAt=now+cooldown})
+    `;
+    const raw = await redis([
+      'EVAL', script, 1, userKey(userId), now, DAILY_COOLDOWN_MS, rewardType, rewardAmount, prizeJson,
+    ]);
+    const result = JSON.parse(raw);
+    if (result.code === 'COOLDOWN') return reply({ error: 'DAILY_COOLDOWN', nextAt: Number(result.nextAt || 0) }, 409);
+    if (result.code === 'PENDING_PRIZE') return reply({ error: 'PENDING_PRIZE' }, 409);
+    return reply({ prize, balance: Number(result.balance || 0), nextAt: Number(result.nextAt || 0) });
   }
 
   if (action === 'keep') {
