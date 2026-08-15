@@ -523,6 +523,7 @@ async function getState(userId) {
     dailyAvailable: !dailyNextAt || Date.now() >= dailyNextAt,
     shareNextAt,
     shareAvailable: !shareNextAt || Date.now() >= shareNextAt,
+    isAdmin: Number(userId) === ADMIN_TELEGRAM_ID,
     tasks: {
       channel: String(taskChannelRaw || '') === '1',
       chat: String(taskChatRaw || '') === '1',
@@ -1003,12 +1004,124 @@ async function rocketCashout(userId, roundId) {
   return JSON.parse(raw);
 }
 
+
+function normalizePromoCode(value) {
+  return String(value || '').trim().toUpperCase();
+}
+function promoKey(code) {
+  return `lion:promo:${code}`;
+}
+function promoUsersKey(code) {
+  return `lion:promo:${code}:users`;
+}
+function assertAdmin(userId) {
+  if (Number(userId) !== ADMIN_TELEGRAM_ID) throw new Error('FORBIDDEN');
+}
+async function getPromo(code) {
+  const values = await redis(['HMGET', promoKey(code), 'reward', 'limit', 'used', 'expiresAt', 'active', 'createdAt']);
+  if (!Array.isArray(values) || values.every(v => v === null || typeof v === 'undefined')) return null;
+  const [reward, limit, used, expiresAt, active, createdAt] = values;
+  return {
+    code,
+    reward: Number(reward || 0),
+    limit: Number(limit || 0),
+    used: Number(used || 0),
+    expiresAt: Number(expiresAt || 0),
+    active: String(active || '0') === '1',
+    createdAt: Number(createdAt || 0),
+  };
+}
+async function listPromos() {
+  const codesRaw = await redis(['SMEMBERS', 'lion:promos']);
+  const codes = Array.isArray(codesRaw) ? codesRaw.map(normalizePromoCode).filter(Boolean) : [];
+  const promos = [];
+  for (const code of codes) {
+    const promo = await getPromo(code);
+    if (promo) promos.push(promo);
+  }
+  return promos.sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+}
+async function activatePromo(userId, rawCode) {
+  const code = normalizePromoCode(rawCode);
+  if (!/^[A-Z0-9_-]{3,24}$/.test(code)) return { error: 'BAD_PROMO_CODE' };
+  const now = Date.now();
+  const script = `
+    local reward = tonumber(redis.call('HGET', KEYS[1], 'reward') or '0')
+    if reward <= 0 then return cjson.encode({code='PROMO_NOT_FOUND'}) end
+    local active = redis.call('HGET', KEYS[1], 'active') or '0'
+    if active ~= '1' then return cjson.encode({code='PROMO_INACTIVE'}) end
+    local expiresAt = tonumber(redis.call('HGET', KEYS[1], 'expiresAt') or '0')
+    if expiresAt > 0 and tonumber(ARGV[2]) >= expiresAt then return cjson.encode({code='PROMO_EXPIRED'}) end
+    local lim = tonumber(redis.call('HGET', KEYS[1], 'limit') or '0')
+    local used = tonumber(redis.call('HGET', KEYS[1], 'used') or '0')
+    if lim > 0 and used >= lim then return cjson.encode({code='PROMO_LIMIT'}) end
+    if redis.call('SISMEMBER', KEYS[3], ARGV[1]) == 1 then return cjson.encode({code='PROMO_ALREADY_USED'}) end
+    redis.call('SADD', KEYS[3], ARGV[1])
+    redis.call('HINCRBY', KEYS[1], 'used', 1)
+    local bal = redis.call('HINCRBY', KEYS[2], 'balance', reward)
+    return cjson.encode({code='OK', reward=reward, balance=bal})
+  `;
+  const raw = await redis(['EVAL', script, 3, promoKey(code), userKey(userId), promoUsersKey(code), String(userId), now]);
+  const result = JSON.parse(raw);
+  if (result.code !== 'OK') return { error: result.code };
+  return { code, reward: Number(result.reward || 0), balance: Number(result.balance || 0) };
+}
+
 async function handleAction(request, action) {
   const user = authUser(request);
   const userId = Number(user.id);
 
   if (action === 'state') {
     return reply(await getState(userId));
+  }
+
+  if (action === 'activate-promo') {
+    if (request.method !== 'POST') return reply({ error: 'METHOD' }, 405);
+    const body = await request.json().catch(() => ({}));
+    const result = await activatePromo(userId, body.code);
+    if (result.error) {
+      const status = result.error === 'BAD_PROMO_CODE' ? 400 : result.error === 'PROMO_NOT_FOUND' ? 404 : 409;
+      return reply({ error: result.error }, status);
+    }
+    const state = await getState(userId);
+    return reply({ ...state, promoCode: result.code, promoReward: result.reward });
+  }
+
+  if (action === 'admin-list-promos') {
+    assertAdmin(userId);
+    return reply({ promos: await listPromos() });
+  }
+
+  if (action === 'admin-create-promo') {
+    assertAdmin(userId);
+    if (request.method !== 'POST') return reply({ error: 'METHOD' }, 405);
+    const body = await request.json().catch(() => ({}));
+    const code = normalizePromoCode(body.code);
+    const reward = Math.floor(Number(body.reward));
+    const limit = Math.floor(Number(body.limit || 0));
+    const expiresAt = Math.floor(Number(body.expiresAt || 0));
+    const now = Date.now();
+    if (!/^[A-Z0-9_-]{3,24}$/.test(code)) return reply({ error: 'BAD_PROMO_CODE' }, 400);
+    if (!Number.isInteger(reward) || reward < 1 || reward > 100000) return reply({ error: 'BAD_PROMO_REWARD' }, 400);
+    if (!Number.isInteger(limit) || limit < 0 || limit > 1000000) return reply({ error: 'BAD_PROMO_LIMIT' }, 400);
+    if (expiresAt && (!Number.isFinite(expiresAt) || expiresAt <= now)) return reply({ error: 'BAD_PROMO_EXPIRY' }, 400);
+    const existing = await redis(['EXISTS', promoKey(code)]);
+    if (Number(existing) === 1) return reply({ error: 'PROMO_EXISTS' }, 409);
+    await redis(['HSET', promoKey(code), 'reward', reward, 'limit', limit, 'used', 0, 'expiresAt', expiresAt || 0, 'active', 1, 'createdAt', now, 'createdBy', userId]);
+    await redis(['SADD', 'lion:promos', code]);
+    return reply({ promo: await getPromo(code) });
+  }
+
+  if (action === 'admin-set-promo-active') {
+    assertAdmin(userId);
+    if (request.method !== 'POST') return reply({ error: 'METHOD' }, 405);
+    const body = await request.json().catch(() => ({}));
+    const code = normalizePromoCode(body.code);
+    if (!/^[A-Z0-9_-]{3,24}$/.test(code)) return reply({ error: 'BAD_PROMO_CODE' }, 400);
+    const exists = await redis(['EXISTS', promoKey(code)]);
+    if (Number(exists) !== 1) return reply({ error: 'PROMO_NOT_FOUND' }, 404);
+    await redis(['HSET', promoKey(code), 'active', body.active ? 1 : 0]);
+    return reply({ promo: await getPromo(code) });
   }
 
   if (action === 'create-invoice') {
@@ -1302,6 +1415,7 @@ export default {
       if (['UNAUTHORIZED', 'EXPIRED', 'NO_USER'].includes(code)) {
         return reply({ error: 'UNAUTHORIZED' }, 401);
       }
+      if (code === 'FORBIDDEN') return reply({ error: 'FORBIDDEN' }, 403);
       console.error(error);
       return reply({ error: 'SERVER_ERROR' }, 500);
     }
