@@ -576,6 +576,26 @@ async function claimTask(userId, taskId) {
 }
 
 
+async function prepareShareTaskMessage(userId) {
+  const prepared = await telegram('savePreparedInlineMessage', {
+    user_id: userId,
+    result: {
+      type: 'article',
+      id: randomBytes(8).toString('hex'),
+      title: 'Lion Gift',
+      description: 'Открой Lion и получай подарки ⭐',
+      input_message_content: {
+        message_text: '🦁 Lion Gift\n🎁 Кейсы и игры в Telegram\n⭐ Открыть Lion: https://t.me/Lion_app_bot',
+      },
+    },
+    allow_user_chats: true,
+    allow_group_chats: true,
+    allow_channel_chats: true,
+  });
+  if (!prepared?.id) throw new Error('SHARE_PREPARE_FAILED');
+  return prepared;
+}
+
 async function claimShareTask(userId) {
   const now = Date.now();
   const script = `
@@ -1007,6 +1027,21 @@ async function handleAction(request, action) {
       prices: [{ label: `${amount} ⭐`, amount }],
     });
     return reply({ invoiceUrl });
+  }
+
+  if (action === 'prepare-share-task') {
+    if (request.method !== 'POST') return reply({ error: 'METHOD' }, 405);
+    const state = await getState(userId);
+    if (!state.shareAvailable) {
+      return reply({ error: 'SHARE_COOLDOWN', nextAt: Number(state.shareNextAt || 0), balance: Number(state.balance || 0) }, 409);
+    }
+    try {
+      const prepared = await prepareShareTaskMessage(userId);
+      return reply({ preparedMessageId: prepared.id, expirationDate: Number(prepared.expiration_date || 0) });
+    } catch (error) {
+      console.error('prepare share task failed:', error);
+      return reply({ error: 'SHARE_PREPARE_FAILED' }, 502);
+    }
   }
 
   if (action === 'claim-share-task') {
