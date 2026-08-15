@@ -33,6 +33,8 @@ const PREMIUM_PRIZES = [
 ];
 
 const TASK_REWARD = 5;
+const SHARE_TASK_REWARD = 5;
+const SHARE_TASK_COOLDOWN_MS = 12 * 60 * 60 * 1000;
 const TASKS = {
   channel: { chatId: '@Liongiftsnews', field: 'task_channel' },
   chat: { chatId: '@Liongiftchat', field: 'task_chat' },
@@ -321,7 +323,6 @@ async function minesStart(userId, bet, mineCount) {
   bet = Number(bet);
   mineCount = Number(mineCount);
   if (!Number.isInteger(bet) || bet < 1 || bet > MAX_MINES_BET) return { error: 'BAD_BET' };
-  if (!Number.isInteger(mineCount) || mineCount < 1 || mineCount > 8) return { error: 'BAD_MINES' };
 
   const round = {
     id: randomBytes(8).toString('hex'),
@@ -488,9 +489,10 @@ async function getState(userId) {
     'dailyLastOpened',
     'task_channel',
     'task_chat',
+    'shareLastClaimed',
     'mines',
   ]);
-  const [balance, opened, sold, inventoryRaw, pendingRaw, withdrawalsRaw, rocketRaw, betHistoryRaw, dailyLastOpenedRaw, taskChannelRaw, taskChatRaw, minesRaw] = Array.isArray(values) ? values : [];
+  const [balance, opened, sold, inventoryRaw, pendingRaw, withdrawalsRaw, rocketRaw, betHistoryRaw, dailyLastOpenedRaw, taskChannelRaw, taskChatRaw, shareLastClaimedRaw, minesRaw] = Array.isArray(values) ? values : [];
   let inventory = [];
   let pending = null;
   let withdrawals = [];
@@ -499,6 +501,8 @@ async function getState(userId) {
   let mines = null;
   const dailyLastOpened = Number(dailyLastOpenedRaw || 0);
   const dailyNextAt = dailyLastOpened > 0 ? dailyLastOpened + DAILY_COOLDOWN_MS : 0;
+  const shareLastClaimed = Number(shareLastClaimedRaw || 0);
+  const shareNextAt = shareLastClaimed > 0 ? shareLastClaimed + SHARE_TASK_COOLDOWN_MS : 0;
   try { inventory = inventoryRaw ? JSON.parse(inventoryRaw) : []; } catch {}
   try { pending = pendingRaw ? JSON.parse(pendingRaw) : null; } catch {}
   try { withdrawals = withdrawalsRaw ? JSON.parse(withdrawalsRaw) : []; } catch {}
@@ -517,6 +521,8 @@ async function getState(userId) {
     betHistory: Array.isArray(betHistory) ? betHistory : [],
     dailyNextAt,
     dailyAvailable: !dailyNextAt || Date.now() >= dailyNextAt,
+    shareNextAt,
+    shareAvailable: !shareNextAt || Date.now() >= shareNextAt,
     tasks: {
       channel: String(taskChannelRaw || '') === '1',
       chat: String(taskChatRaw || '') === '1',
@@ -566,6 +572,26 @@ async function claimTask(userId, taskId) {
     task.field,
     TASK_REWARD,
   ]);
+  return JSON.parse(raw);
+}
+
+
+async function claimShareTask(userId) {
+  const now = Date.now();
+  const script = `
+    local now = tonumber(ARGV[1])
+    local cooldown = tonumber(ARGV[2])
+    local reward = tonumber(ARGV[3])
+    local last = tonumber(redis.call('HGET', KEYS[1], 'shareLastClaimed') or '0')
+    if last > 0 and (now - last) < cooldown then
+      local bal = tonumber(redis.call('HGET', KEYS[1], 'balance') or '0')
+      return cjson.encode({code='COOLDOWN', nextAt=last+cooldown, balance=bal})
+    end
+    redis.call('HSET', KEYS[1], 'shareLastClaimed', now)
+    local bal = tonumber(redis.call('HINCRBY', KEYS[1], 'balance', reward))
+    return cjson.encode({code='OK', nextAt=now+cooldown, balance=bal})
+  `;
+  const raw = await redis(['EVAL', script, 1, userKey(userId), now, SHARE_TASK_COOLDOWN_MS, SHARE_TASK_REWARD]);
   return JSON.parse(raw);
 }
 
@@ -983,6 +1009,14 @@ async function handleAction(request, action) {
     return reply({ invoiceUrl });
   }
 
+  if (action === 'claim-share-task') {
+    if (request.method !== 'POST') return reply({ error: 'METHOD' }, 405);
+    const result = await claimShareTask(userId);
+    if (result.code === 'COOLDOWN') return reply({ error: 'SHARE_COOLDOWN', nextAt: Number(result.nextAt || 0), balance: Number(result.balance || 0) }, 409);
+    const state = await getState(userId);
+    return reply({ ...state, rewarded: true, reward: SHARE_TASK_REWARD });
+  }
+
   if (action === 'check-task') {
     if (request.method !== 'POST') return reply({ error: 'METHOD' }, 405);
     const body = await request.json().catch(() => ({}));
@@ -1164,7 +1198,7 @@ async function handleAction(request, action) {
   if (action === 'mines-start') {
     if (request.method !== 'POST') return reply({ error: 'METHOD' }, 405);
     const body = await request.json().catch(() => ({}));
-    const result = await minesStart(userId, Number(body.bet), Number(body.mines));
+    const result = await minesStart(userId, Number(body.bet), 1);
     if (result.error === 'BAD_BET' || result.error === 'BAD_MINES') return reply({ error: result.error }, 400);
     if (result.error === 'INSUFFICIENT_BALANCE') return reply({ error: result.error, balance: result.balance }, 402);
     if (result.error) return reply({ error: result.error }, 409);
