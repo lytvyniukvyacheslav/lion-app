@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>Lion</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
@@ -184,9 +184,15 @@
 .adminToggle.off{background:#6b2638}
 
 
-/* V17: focused game screens, editable Mines bet, iPhone double-tap protection */
-html,body,.app{touch-action:manipulation}
-button,.gameCard,.case,.dailyCase,.mineCell,.premiumWheelWrap{touch-action:manipulation}
+/* V18: global iPhone zoom protection. Keep vertical scrolling, block pinch/double-tap zoom. */
+html,body,.app{
+  touch-action:pan-y!important;
+  -webkit-text-size-adjust:100%;
+  text-size-adjust:100%;
+}
+button,input,.gameCard,.case,.dailyCase,.mineCell,.premiumWheelWrap,.rocketBox,.minesBox,.premiumBox,.modal,.nav{
+  touch-action:pan-y!important;
+}
 .gameFocusBar{display:none;align-items:center;gap:12px;margin:0 0 14px}
 .gameFocusBack{border:1px solid #34415f;background:#141c31;color:#fff;border-radius:999px;padding:10px 15px;font-weight:900;font-size:15px}
 .gameFocusTitle{font-size:18px;font-weight:1000}
@@ -566,14 +572,34 @@ function exitGameFocus(){
 }
 if($('gameBack'))$('gameBack').onclick=exitGameFocus;
 
-let lastFastTap=0;
+// V18: global iOS zoom guard.
+const viewportMeta=document.querySelector('meta[name="viewport"]');
+const LOCKED_VIEWPORT='width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover';
+function lockLionScale(){
+  if(viewportMeta&&viewportMeta.getAttribute('content')!==LOCKED_VIEWPORT){
+    viewportMeta.setAttribute('content',LOCKED_VIEWPORT);
+  }
+  document.documentElement.style.touchAction='pan-y';
+  document.body.style.touchAction='pan-y';
+}
+lockLionScale();
+
+['gesturestart','gesturechange','gestureend'].forEach(type=>{
+  document.addEventListener(type,e=>e.preventDefault(),{passive:false});
+});
+
+let lastGlobalTouchEnd=0;
 document.addEventListener('touchend',e=>{
-  const target=e.target.closest&&e.target.closest('button,.gameCard,.case,.dailyCase,.mineCell,.premiumWheelWrap,.rocketBox,.minesBox,.premiumBox');
-  if(!target)return;
   const now=Date.now();
-  if(now-lastFastTap<320)e.preventDefault();
-  lastFastTap=now;
+  if(now-lastGlobalTouchEnd<360){
+    e.preventDefault();
+  }
+  lastGlobalTouchEnd=now;
 },{passive:false});
+
+document.addEventListener('dblclick',e=>e.preventDefault(),{passive:false});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)lockLionScale()});
+window.addEventListener('pageshow',lockLionScale);
 
 document.querySelectorAll('.n').forEach(b=>b.onclick=()=>{
 exitGameFocus();document.querySelectorAll('.n').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));$(b.dataset.page).classList.add('active');if(b.dataset.page==='games'&&rocket?.status==='running')pollRocket()});
