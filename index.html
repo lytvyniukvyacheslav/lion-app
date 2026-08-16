@@ -168,7 +168,7 @@
 .promoMsg{min-height:18px;margin-top:8px;font-size:12px;color:#aeb9cf;text-align:center}
 .promoMsg.ok{color:#7ef2b3}.promoMsg.err{color:#ff9d9d}
 .adminOpen{display:none;width:100%;margin-top:14px;border:1px solid #f0a51d;border-radius:15px;padding:13px;background:linear-gradient(90deg,rgba(245,158,11,.18),rgba(250,204,21,.12));color:#ffd970;font-weight:1000}
-.adminOpen.show{display:block}
+.adminOpen.show{display:block}.adminOpen{font-size:14px!important;min-height:48px}
 .adminModal{text-align:left;max-height:82vh;overflow:auto}
 .adminModal h2{text-align:center;margin-top:0}
 .adminGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
@@ -182,6 +182,29 @@
 .adminPromoMeta{font-size:11px;color:#aeb9cf;margin-top:6px;line-height:1.45}
 .adminToggle{border:0;border-radius:11px;padding:8px 10px;font-weight:900;color:#fff;background:#1f7a4b}
 .adminToggle.off{background:#6b2638}
+
+
+/* V17: focused game screens, editable Mines bet, iPhone double-tap protection */
+html,body,.app{touch-action:manipulation}
+button,.gameCard,.case,.dailyCase,.mineCell,.premiumWheelWrap{touch-action:manipulation}
+.gameFocusBar{display:none;align-items:center;gap:12px;margin:0 0 14px}
+.gameFocusBack{border:1px solid #34415f;background:#141c31;color:#fff;border-radius:999px;padding:10px 15px;font-weight:900;font-size:15px}
+.gameFocusTitle{font-size:18px;font-weight:1000}
+#games.gameFocus .gameFocusBar{display:flex}
+#games.gameFocus>.gamesTitle,#games.gameFocus>.gameCard{display:none!important}
+#games.gameFocus>.rocketBox,#games.gameFocus>.minesBox,#games.gameFocus>.premiumBox{display:none!important;margin-top:0!important}
+#games.gameFocus.focus-rocket>.rocketBox{display:block!important}
+#games.gameFocus.focus-mines>.minesBox{display:block!important}
+#games.gameFocus.focus-premium>.premiumBox{display:block!important}
+body.game-focus .nav{display:none!important}
+body.game-focus .app{padding-bottom:26px}
+body.game-focus .top{display:none}
+.minesBetInputWrap{display:flex;align-items:center;justify-content:center;gap:5px;margin:3px auto 6px}
+.minesBetInput{width:78px;max-width:100%;border:1px solid #5a36b9;background:#0b1329;color:#fff;border-radius:10px;padding:6px 7px;text-align:center;font-size:19px;font-weight:1000;outline:none}
+.minesBetInput:focus{border-color:#2ea4ff;box-shadow:0 0 0 2px rgba(46,164,255,.12)}
+.minesBetInput:disabled{opacity:.7}
+.minesBetStar{font-size:18px}
+@media(max-width:360px){.minesBetInput{width:66px;font-size:17px}.minesBetPicks{gap:3px!important}.minesBetPick{padding:5px 7px!important}}
 
 </style>
 </head>
@@ -216,6 +239,7 @@
 </section>
 
 <section id="games" class="page">
+  <div class="gameFocusBar" id="gameFocusBar"><button class="gameFocusBack" id="gameBack">‹ Назад</button><div class="gameFocusTitle" id="gameFocusTitle">Игра</div></div>
   <h2 class="gamesTitle">🎮 ИГРЫ</h2>
 
   <div class="gameCard">
@@ -238,7 +262,7 @@
       <div class="rocketAxis" id="rocketAxis"></div>
     </div>
     <div class="rocketRecentBlock"><div class="rocketRecentTitle">ПОСЛЕДНИЕ 10 РАУНДОВ</div><div class="rocketRecent" id="rocketRecent"></div></div>
-    <div class="betRow"><input class="betInput" id="rocketBet" type="number" inputmode="numeric" min="1" value="10"><button class="maxBtn" id="rocketMax">MAX</button></div>
+    <div class="betRow"><input class="betInput" id="rocketBet" type="number" inputmode="numeric" min="1" max="10000" value="10"><button class="maxBtn" id="rocketMax">MAX</button></div>
     <div class="rocketActions"><button class="startRocket" id="rocketStart">СДЕЛАТЬ СТАВКУ</button><button class="cashout" id="rocketCashout" disabled>ЗАБРАТЬ</button></div>
     <div class="demo" style="margin-top:10px">Результат Rocket рассчитывается на сервере.</div>
   </div>
@@ -252,7 +276,7 @@
     <div class="minesOdds" id="minesOdds"><span>x1.00</span><span>x1.12</span><span>x1.28</span><span>x1.50</span><span>x1.80</span></div>
     <div class="minesGrid" id="minesGrid"></div>
     <div class="minesControls">
-      <div class="minesControl"><small>Ставка</small><b id="minesBetLabel">10 ⭐</b><div class="minesBetPicks"><button class="minesBetPick active" data-mines-bet="10">10</button><button class="minesBetPick" data-mines-bet="50">50</button><button class="minesBetPick" data-mines-bet="100">100</button><button class="minesBetPick" data-mines-bet="max">MAX</button></div></div>
+      <div class="minesControl"><small>Ставка</small><div class="minesBetInputWrap"><input id="minesBetInput" class="minesBetInput" type="number" inputmode="numeric" min="1" max="10000" step="1" value="10" aria-label="Ставка от 1 до 10000"><span class="minesBetStar">⭐</span></div><div class="minesBetPicks"><button class="minesBetPick active" data-mines-bet="10">10</button><button class="minesBetPick" data-mines-bet="50">50</button><button class="minesBetPick" data-mines-bet="100">100</button><button class="minesBetPick" data-mines-bet="max">MAX</button></div></div>
       <div class="minesControl"><small>Мины</small><div class="mineCountSimple"><strong>💣</strong><b>1</b></div></div>
       <div class="minesControl"><small>Возможный выигрыш</small><b id="minesWinLabel">10 ⭐</b></div>
     </div>
@@ -375,7 +399,12 @@ function updateShareTaskUI(){const b=$('shareTaskButton'),t=$('shareTaskTimer');
 function renderTasks(){const defs={channel:{btn:'taskCheckChannel'},chat:{btn:'taskCheckChat'}};for(const [id,d] of Object.entries(defs)){const b=$(d.btn);if(!b)continue;const claimed=Boolean(tasks&&tasks[id]);b.classList.toggle('claimed',claimed);b.disabled=claimed||taskChecking===id;b.textContent=claimed?'ПОЛУЧЕНО ✅':(taskChecking===id?'ПРОВЕРЯЕМ…':'ПРОВЕРИТЬ +5 ⭐')}}
 function update(){
   $('balance').textContent=balance+' ⭐';$('pbalance').textContent=balance+' ⭐';$('pgifts').textContent=inventory.length;$('pcases').textContent=opened;$('psold').textContent=sold;
-  if($('adminOpen'))$('adminOpen').classList.toggle('show',Boolean(isAdmin));
+  const ownerFromTelegram=Number(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user&&tg.initDataUnsafe.user.id)===OWNER_TELEGRAM_ID;
+  if(ownerFromTelegram)isAdmin=true;
+  if($('adminOpen')){
+    $('adminOpen').classList.toggle('show',Boolean(isAdmin));
+    $('adminOpen').style.display=isAdmin?'block':'none';
+  }
   spin.disabled=balance<CASE||busy||!initData;$('note').classList.toggle('show',balance<CASE);
   renderInv();renderBetHistory();renderRocketRecent();renderTasks();updateDailyUI();updateShareTaskUI();updateRocketButtons();renderMines();if($('premiumSpin'))$('premiumSpin').disabled=premiumBusy||balance<70
 }
@@ -443,8 +472,8 @@ function updateRocketUI(){
 }
 function updateRocketButtons(){const running=rocket&&rocket.status==='running';$('rocketStart').disabled=running||!initData;$('rocketCashout').disabled=!running;$('rocketBet').disabled=running;$('rocketMax').disabled=running;updateRocketUI()}
 async function pollRocket(){if(rocketTimer)clearInterval(rocketTimer);rocketTimer=setInterval(async()=>{if(!rocket||rocket.status!=='running'){clearInterval(rocketTimer);rocketTimer=null;return}try{const d=await api('rocket-status');rocket=d.rocket;updateRocketButtons();if(rocket&&rocket.status!=='running'){await refreshState()}}catch(e){console.error(e)}},350)}
-$('openRocket').onclick=()=>{$('rocketBox').classList.toggle('show');if($('rocketBox').classList.contains('show')&&rocket?.status==='running')pollRocket()};$('rocketMax').onclick=()=>{$('rocketBet').value=Math.max(1,balance)};$('rocketBet').addEventListener('input',updateRocketUI);
-$('rocketStart').onclick=async()=>{const bet=Math.floor(Number($('rocketBet').value));if(!bet||bet<1){alert('Введите ставку');return}try{const d=await api('rocket-start','POST',{bet});balance=Number(d.balance);rocket=d.rocket;update();$('rocketBox').classList.add('show');pollRocket()}catch(e){alert('Rocket: '+e.message)}};
+$('openRocket').onclick=()=>{enterGameFocus('rocket','🚀 Rocket');$('rocketBox').classList.add('show');if(rocket?.status==='running')pollRocket()};$('rocketMax').onclick=()=>{$('rocketBet').value=Math.min(10000,Math.max(1,balance));updateRocketUI()};$('rocketBet').addEventListener('input',updateRocketUI);
+$('rocketStart').onclick=async()=>{const bet=Math.floor(Number($('rocketBet').value));if(!bet||bet<1||bet>10000){alert('Ставка должна быть от 1 до 10000 ⭐');return}try{const d=await api('rocket-start','POST',{bet});balance=Number(d.balance);rocket=d.rocket;update();$('rocketBox').classList.add('show');pollRocket()}catch(e){alert('Rocket: '+e.message)}};
 $('rocketCashout').onclick=async()=>{if(!rocket?.id)return;$('rocketCashout').disabled=true;try{const d=await api('rocket-cashout','POST',{roundId:rocket.id});balance=Number(d.balance);rocket={...rocket,status:'cashedout',cashoutMultiplier:d.multiplier,payout:d.payout,current:d.multiplier};update();if(rocketTimer)clearInterval(rocketTimer)}catch(e){if(e.message==='ROCKET_CRASHED'){rocket={...rocket,status:'crashed',crashAt:Number(e.data?.crashAt||1),current:Number(e.data?.crashAt||1)};update();refreshState()}else{alert('Rocket: '+e.message)}}};
 
 
@@ -453,21 +482,38 @@ function renderRocketAxis(){const a=$('rocketAxis');if(a&&!a.dataset.ready){a.in
 function minesFairMult(mineCount,opened){if(opened<=0)return 1;let m=1;for(let i=0;i<opened;i++)m*=(9-i)/(9-mineCount-i);return Math.floor(m*100)/100}
 function renderMines(){
   const count=1;
-  const opened=new Set((mines?.opened||[]).map(Number));
+  const openedArr=(mines?.opened||[]).map(Number);
+  const opened=new Set(openedArr);
   const lost=mines?.status==='lost', mineSet=new Set((mines?.mines||[]).map(Number));
+  const running=mines?.status==='running';
+  const roundBet=Math.max(1,Math.floor(Number(mines?.bet||minesBet)));
+  if(running&&Number(mines?.bet)>0)minesBet=Number(mines.bet);
+  const controlBet=running?roundBet:minesBet;
   const mult=mines?.multiplier||minesFairMult(count,opened.size);
   const pct=Math.round(((9-count)/9)*100);
   if($('minesChance'))$('minesChance').textContent=pct+'%';
-  if($('minesMultLabel'))$('minesMultLabel').textContent='x'+Number(mult).toFixed(2);
-  if($('minesBetLabel'))$('minesBetLabel').textContent=minesBet+' ⭐';document.querySelectorAll('[data-mines-bet]').forEach(btn=>{const v=btn.dataset.minesBet==='max'?Math.max(1,balance):Number(btn.dataset.minesBet);btn.classList.toggle('active',v===minesBet);btn.disabled=mines?.status==='running'});
-  if($('minesWinLabel'))$('minesWinLabel').textContent=Math.floor(minesBet*Number(mult||1))+' ⭐';
+  const betInput=$('minesBetInput');
+  if(betInput){
+    if(document.activeElement!==betInput||running)betInput.value=String(controlBet);
+    betInput.disabled=running;
+  }
+  document.querySelectorAll('[data-mines-bet]').forEach(btn=>{
+    const v=btn.dataset.minesBet==='max'?Math.min(10000,Math.max(1,balance)):Number(btn.dataset.minesBet);
+    btn.classList.toggle('active',v===controlBet);
+    btn.disabled=running;
+  });
+  if($('minesWinLabel'))$('minesWinLabel').textContent=Math.floor((running?roundBet:controlBet)*Number(mult||1))+' ⭐';
   const odds=$('minesOdds');if(odds){const arr=[];for(let i=0;i<5;i++)arr.push(minesFairMult(count,i));odds.innerHTML=arr.map((x,i)=>`<span class="${i===opened.size?'active':''}">x${x.toFixed(2)}</span>`).join('')}
   const grid=$('minesGrid');if(grid)grid.innerHTML=Array.from({length:9},(_,i)=>{
     if(lost&&mineSet.has(i))return `<button class="mineCell mine" data-mcell="${i}" disabled>💣</button>`;
-    if(opened.has(i))return `<button class="mineCell safe" data-mcell="${i}" disabled><div class="mineSafeText">x${Number(mult).toFixed(2)}<small>+${Math.max(0,Math.floor(minesBet*Number(mult))-minesBet)} ⭐</small></div></button>`;
-    return `<button class="mineCell" data-mcell="${i}" ${mines?.status==='running'?'':'disabled'}><img src="${MINES_LION}"></button>`;
+    if(opened.has(i)){
+      const step=openedArr.indexOf(i)+1;
+      const cellMult=minesFairMult(count,step);
+      const cellProfit=Math.max(0,Math.floor(roundBet*cellMult)-roundBet);
+      return `<button class="mineCell safe" data-mcell="${i}" disabled><div class="mineSafeText">x${cellMult.toFixed(2)}<small>+${cellProfit} ⭐</small></div></button>`;
+    }
+    return `<button class="mineCell" data-mcell="${i}" ${running?'':'disabled'}><img src="${MINES_LION}"></button>`;
   }).join('');
-  const running=mines?.status==='running';
   if($('minesStart'))$('minesStart').disabled=running;
   if($('minesCashout'))$('minesCashout').disabled=!running||opened.size<1;
 }
@@ -486,17 +532,52 @@ function animatePremium(slot){
   w.style.transform=`rotate(${target}deg)`;
   return new Promise(r=>setTimeout(r,4300));
 }
-document.querySelectorAll('[data-mines-bet]').forEach(btn=>btn.onclick=()=>{if(mines?.status==='running')return;const v=btn.dataset.minesBet;minesBet=v==='max'?Math.max(1,balance):Number(v);renderMines()});
-$('openMines').onclick=()=>{$('minesBox').classList.toggle('show');renderMines()};
-$('minesStart').onclick=async()=>{try{const d=await api('mines-start','POST',{bet:minesBet,mines:1});balance=Number(d.balance);mines=d.mines;update();renderMines()}catch(e){alert('Мины: '+(e.message==='INSUFFICIENT_BALANCE'?'Недостаточно ⭐':e.message))}};
+function normalizeMinesBet(raw){
+  const n=Math.floor(Number(raw));
+  if(!Number.isFinite(n))return null;
+  return Math.min(10000,Math.max(1,n));
+}
+document.querySelectorAll('[data-mines-bet]').forEach(btn=>btn.onclick=()=>{if(mines?.status==='running')return;const v=btn.dataset.minesBet;minesBet=v==='max'?Math.min(10000,Math.max(1,balance)):Number(v);if($('minesBetInput'))$('minesBetInput').value=minesBet;renderMines()});
+if($('minesBetInput')){
+  $('minesBetInput').addEventListener('input',()=>{if(mines?.status==='running')return;const n=normalizeMinesBet($('minesBetInput').value);if(n!==null){minesBet=n;renderMines()}});
+  $('minesBetInput').addEventListener('blur',()=>{if(mines?.status==='running')return;const n=normalizeMinesBet($('minesBetInput').value);minesBet=n===null?1:n;$('minesBetInput').value=minesBet;renderMines()});
+}
+$('openMines').onclick=()=>{enterGameFocus('mines','💣 Мины 3×3');$('minesBox').classList.add('show');renderMines()};
+$('minesStart').onclick=async()=>{const n=normalizeMinesBet($('minesBetInput')?.value??minesBet);if(n===null||n<1||n>10000){alert('Ставка должна быть от 1 до 10000 ⭐');return}minesBet=n;if($('minesBetInput'))$('minesBetInput').value=minesBet;try{const d=await api('mines-start','POST',{bet:minesBet,mines:1});balance=Number(d.balance);mines=d.mines;update();renderMines()}catch(e){alert('Мины: '+(e.message==='INSUFFICIENT_BALANCE'?'Недостаточно ⭐':e.message==='BAD_BET'?'Ставка должна быть от 1 до 10000 ⭐':e.message))}};
 $('minesGrid').onclick=async e=>{const c=e.target.closest('[data-mcell]');if(!c||!mines?.id||mines.status!=='running')return;c.disabled=true;try{const d=await api('mines-open','POST',{roundId:mines.id,cell:Number(c.dataset.mcell)});mines=d.mines;renderMines();if(d.code==='MINE'){await refreshState();setTimeout(()=>alert('💥 Мина! Ставка проиграна.'),100)}}catch(err){alert('Мины: '+err.message);renderMines()}};
 $('minesCashout').onclick=async()=>{if(!mines?.id)return;try{const d=await api('mines-cashout','POST',{roundId:mines.id});balance=Number(d.balance);mines=d.mines||{...mines,status:'cashedout',payout:d.payout,multiplier:d.multiplier};update();renderMines();alert(`✅ Забрано ${d.payout} ⭐ на x${Number(d.multiplier).toFixed(2)}`)}catch(e){alert('Мины: '+e.message)}};
-$('openPremium').onclick=()=>{$('premiumBox').classList.toggle('show');renderPremiumWheel()};
+$('openPremium').onclick=()=>{enterGameFocus('premium','🎡 Рулетка 70 ⭐');$('premiumBox').classList.add('show');renderPremiumWheel()};
 $('premiumSpin').onclick=async()=>{if(premiumBusy||balance<70)return;premiumBusy=true;$('premiumSpin').disabled=true;$('premiumStatus').textContent='Крутим…';try{const d=await api('premium-roulette','POST',{});balance=Number(d.balance);const w=giftBy(d.prize);pending=w.nothing?null:w;update();await animatePremium(w.slot);$('premiumStatus').textContent=w.nothing?'ZERO — ничего не выпало':`Выпало: ${w.emoji} ${w.name}`;showWin(w);await refreshState()}catch(e){if(e.message==='PENDING_PRIZE')await refreshState();else alert('Рулетка: '+e.message)}finally{premiumBusy=false;$('premiumSpin').disabled=balance<70}};
 
+
+function enterGameFocus(kind,title){
+  const games=$('games');if(!games)return;
+  games.classList.remove('focus-rocket','focus-mines','focus-premium');
+  games.classList.add('gameFocus','focus-'+kind);
+  document.body.classList.add('game-focus');
+  if($('gameFocusTitle'))$('gameFocusTitle').textContent=title||'Игра';
+  window.scrollTo({top:0,behavior:'instant'});
+}
+function exitGameFocus(){
+  const games=$('games');if(games)games.classList.remove('gameFocus','focus-rocket','focus-mines','focus-premium');
+  document.body.classList.remove('game-focus');
+  ['rocketBox','minesBox','premiumBox'].forEach(id=>$(id)?.classList.remove('show'));
+  window.scrollTo({top:0,behavior:'instant'});
+}
+if($('gameBack'))$('gameBack').onclick=exitGameFocus;
+
+let lastFastTap=0;
+document.addEventListener('touchend',e=>{
+  const target=e.target.closest&&e.target.closest('button,.gameCard,.case,.dailyCase,.mineCell,.premiumWheelWrap,.rocketBox,.minesBox,.premiumBox');
+  if(!target)return;
+  const now=Date.now();
+  if(now-lastFastTap<320)e.preventDefault();
+  lastFastTap=now;
+},{passive:false});
+
 document.querySelectorAll('.n').forEach(b=>b.onclick=()=>{
-document.querySelectorAll('.n').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));$(b.dataset.page).classList.add('active');if(b.dataset.page==='games'&&rocket?.status==='running')pollRocket()});
-if(tg){tg.ready();tg.expand();const u=tg.initDataUnsafe&&tg.initDataUnsafe.user;if(u){$('pname').textContent=[u.first_name,u.last_name].filter(Boolean).join(' ');$('pid').textContent='ID: '+u.id}}
+exitGameFocus();document.querySelectorAll('.n').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));$(b.dataset.page).classList.add('active');if(b.dataset.page==='games'&&rocket?.status==='running')pollRocket()});
+if(tg){tg.ready();tg.expand();const u=tg.initDataUnsafe&&tg.initDataUnsafe.user;if(u){$('pname').textContent=[u.first_name,u.last_name].filter(Boolean).join(' ');$('pid').textContent='ID: '+u.id;if(Number(u.id)===OWNER_TELEGRAM_ID){isAdmin=true;if($('adminOpen')){$('adminOpen').classList.add('show');$('adminOpen').style.display='block';}}}}
 buildRoulette();renderRocketAxis();renderPremiumWheel();renderMines();update();setInterval(()=>{updateDailyUI();updateShareTaskUI()},1000);refreshState();
 </script>
 </body>
