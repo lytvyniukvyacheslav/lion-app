@@ -21,7 +21,7 @@ function getSecret(request) {
   return '';
 }
 
-export default async function handler(request) {
+async function handler(request) {
   if (request.method !== 'POST') {
     return json({ ok: false, error: 'METHOD_NOT_ALLOWED' }, 405);
   }
@@ -100,3 +100,5 @@ export default async function handler(request) {
     );
   }
 }
+
+export default { fetch: handler };
