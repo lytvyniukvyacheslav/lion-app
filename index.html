@@ -494,12 +494,12 @@ if($('refundStarsBtn'))$('refundStarsBtn').onclick=async()=>{
     const response=await fetch('/api/refund-stars',{
       method:'POST',
       headers:{
-        'Content-Type':'application/json',
-        'Authorization':'Bearer '+secret
+        'Content-Type':'application/json'
       },
       body:JSON.stringify({
         user_id:Number(userId),
-        telegram_payment_charge_id:chargeId
+        telegram_payment_charge_id:chargeId,
+        secret
       })
     });
 
@@ -519,7 +519,9 @@ if($('refundStarsBtn'))$('refundStarsBtn').onclick=async()=>{
     msg.className='promoMsg ok';
     $('refundChargeId').value='';
   }catch(err){
-    msg.textContent='Ошибка: '+err.message;
+    msg.textContent=err instanceof TypeError
+      ? 'Ошибка: запрос refund не отправлен (R2). '+err.message
+      : 'Ошибка: '+err.message;
     msg.className='promoMsg err';
   }finally{
     btn.disabled=false;
@@ -695,12 +697,12 @@ buildRoulette();renderRocketAxis();renderPremiumWheel();renderMines();update();s
       const response = await fetch(API_URL, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + secret
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           user_id: Number(userId),
-          telegram_payment_charge_id: String(chargeId)
+          telegram_payment_charge_id: String(chargeId),
+          secret
         })
       });
 
@@ -720,7 +722,9 @@ buildRoulette();renderRocketAxis();renderPremiumWheel();renderMines();update();s
       return result;
     } catch (error) {
       console.error(error);
-      alert('Помилка запиту: ' + error.message);
+      alert(error instanceof TypeError
+        ? 'Запит refund не відправлено (R2): ' + error.message
+        : 'Помилка запиту: ' + error.message);
     }
   };
 })();
