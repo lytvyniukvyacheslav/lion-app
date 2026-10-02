@@ -607,5 +607,49 @@ exitGameFocus();document.querySelectorAll('.n').forEach(x=>x.classList.remove('a
 if(tg){tg.ready();tg.expand();const u=tg.initDataUnsafe&&tg.initDataUnsafe.user;if(u){$('pname').textContent=[u.first_name,u.last_name].filter(Boolean).join(' ');$('pid').textContent='ID: '+u.id;if(Number(u.id)===OWNER_TELEGRAM_ID){isAdmin=true;document.body.classList.add('ownerView');if($('adminOpen')){$('adminOpen').classList.add('show');$('adminOpen').style.display='block';}}}}
 buildRoulette();renderRocketAxis();renderPremiumWheel();renderMines();update();setInterval(()=>{updateDailyUI();updateShareTaskUI()},1000);refreshState();
 </script>
+  <script>
+(() => {
+  const API_URL = '/api/refund-stars';
+
+  window.refundTelegramStars = async function(userId, chargeId, secret) {
+    if (!userId || !chargeId) {
+      alert('Потрібні User ID та Telegram payment charge ID');
+      return;
+    }
+
+    try {
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + secret
+        },
+        body: JSON.stringify({
+          user_id: Number(userId),
+          telegram_payment_charge_id: String(chargeId)
+        })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.ok) {
+        console.error('Refund error:', result);
+        alert('Помилка повернення Stars: ' +
+          (result?.telegram?.description ||
+           result?.message ||
+           result?.error ||
+           'Unknown error'));
+        return;
+      }
+
+      alert('✅ Telegram Stars успішно повернено');
+      return result;
+    } catch (error) {
+      console.error(error);
+      alert('Помилка запиту: ' + error.message);
+    }
+  };
+})();
+</script>
 </body>
 </html>
