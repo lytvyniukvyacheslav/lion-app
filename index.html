@@ -183,6 +183,14 @@
 .adminToggle{border:0;border-radius:11px;padding:8px 10px;font-weight:900;color:#fff;background:#1f7a4b}
 .adminToggle.off{background:#6b2638}
 
+.adminRefund{margin-top:18px;padding-top:16px;border-top:1px solid #2f3b60}
+.adminRefundTitle{font-size:15px;font-weight:1000;color:#ffcf5a;margin-bottom:8px}
+.adminRefundHint{font-size:11px;color:#aeb9cf;line-height:1.45;margin-bottom:10px}
+.adminRefund .adminInput{margin-top:8px}
+.adminRefundBtn{width:100%;margin-top:10px;border:0;border-radius:14px;padding:13px 14px;background:linear-gradient(90deg,#ef4444,#f59e0b);color:#fff;font-weight:1000}
+.adminRefundBtn:disabled{opacity:.55}
+
+
 
 /* V18: global iPhone zoom protection. Keep vertical scrolling, block pinch/double-tap zoom. */
 html,body,.app{
@@ -352,7 +360,7 @@ body.game-focus .top{display:none}
       <div class="stat"><small>Кейсов открыто</small><b id="pcases">0</b></div>
       <div class="stat"><small>Продано</small><b id="psold">0</b></div>
     </div>
-    <button id="adminOpen" class="adminOpen">⚙️ АДМИН · ПРОМОКОДЫ</button>
+    <button id="adminOpen" class="adminOpen">⚙️ АДМИН</button>
     <div class="historyBlock">
       <h3>ИСТОРИЯ СТАВОК</h3>
       <div id="betHistory"></div>
@@ -367,7 +375,7 @@ body.game-focus .top{display:none}
 <div class="overlay" id="topup"><div class="modal"><h2>ПОПОЛНИТЬ БАЛАНС</h2><div class="topups" id="topups"></div><div class="promoBox"><div class="promoTitle">ПРОМОКОД</div><div class="promoRow"><input id="promoInput" class="promoInput" maxlength="24" autocomplete="off" placeholder="Введите промокод"><button id="promoApply" class="promoApply">АКТИВИРОВАТЬ</button></div><div id="promoMsg" class="promoMsg"></div></div><button id="closeTopup" class="closeBtn secondary" style="margin-top:14px">Закрыть</button></div></div>
 
 
-<div class="overlay" id="adminModal"><div class="modal adminModal"><h2>⚙️ ПРОМОКОДЫ</h2>
+<div class="overlay" id="adminModal"><div class="modal adminModal"><h2>⚙️ АДМИН</h2>
   <div class="adminGrid">
     <div class="adminField full"><label>Промокод</label><input id="adminPromoCode" class="adminInput" maxlength="24" placeholder="Напр. LION50"></div>
     <div class="adminField"><label>Награда ⭐</label><input id="adminPromoReward" class="adminInput" type="number" min="1" max="100000" value="50"></div>
@@ -378,6 +386,15 @@ body.game-focus .top{display:none}
   <button id="adminCreatePromo" class="adminBtn" style="width:100%;margin-top:12px">СОЗДАТЬ ПРОМОКОД</button>
   <div id="adminPromoMsg" class="promoMsg"></div>
   <div id="adminPromoList" class="adminList"></div>
+  <div class="adminRefund">
+    <div class="adminRefundTitle">↩️ ВОЗВРАТ TELEGRAM STARS</div>
+    <div class="adminRefundHint">Нужны Telegram User ID и telegram_payment_charge_id из успешного платежа. Секрет должен совпадать с REFUND_ADMIN_SECRET в Vercel.</div>
+    <input id="refundUserId" class="adminInput" inputmode="numeric" placeholder="Telegram User ID">
+    <input id="refundChargeId" class="adminInput" autocomplete="off" placeholder="telegram_payment_charge_id">
+    <input id="refundAdminSecret" class="adminInput" type="password" autocomplete="off" placeholder="REFUND_ADMIN_SECRET">
+    <button id="refundStarsBtn" class="adminRefundBtn">ВЕРНУТЬ STARS</button>
+    <div id="refundStarsMsg" class="promoMsg"></div>
+  </div>
   <button id="adminClose" class="closeBtn secondary" style="width:100%;margin-top:14px">Закрыть</button>
 </div></div>
 
@@ -451,6 +468,63 @@ $('adminClose').onclick=()=>$('adminModal').classList.remove('show');
 $('adminPromoCode').addEventListener('input',e=>{e.target.value=String(e.target.value||'').toUpperCase().replace(/[^A-Z0-9_-]/g,'')});
 $('adminCreatePromo').onclick=async()=>{const code=String($('adminPromoCode').value||'').trim().toUpperCase(),reward=Number($('adminPromoReward').value||0),limit=Number($('adminPromoLimit').value||0),rawExp=$('adminPromoExpires').value,expiresAt=rawExp?new Date(rawExp).getTime():0;const b=$('adminCreatePromo'),m=$('adminPromoMsg');m.className='promoMsg';if(code.length<3){m.textContent='Введите код минимум из 3 символов';m.classList.add('err');return}b.disabled=true;m.textContent='Создаём…';try{const d=await api('admin-create-promo','POST',{code,reward,limit,expiresAt});m.textContent='Промокод '+d.promo.code+' создан ✅';m.className='promoMsg ok';$('adminPromoCode').value='';await loadAdminPromos()}catch(e){m.textContent='Ошибка: '+e.message;m.className='promoMsg err'}finally{b.disabled=false}};
 $('adminPromoList').onclick=async e=>{const b=e.target.closest('[data-admin-toggle]');if(!b)return;b.disabled=true;try{await api('admin-set-promo-active','POST',{code:b.dataset.adminToggle,active:b.dataset.active!=='1'});await loadAdminPromos()}catch(err){alert('Ошибка: '+err.message);b.disabled=false}};
+
+if($('refundStarsBtn'))$('refundStarsBtn').onclick=async()=>{
+  if(!isAdmin)return;
+  const userId=String($('refundUserId').value||'').trim();
+  const chargeId=String($('refundChargeId').value||'').trim();
+  const secret=String($('refundAdminSecret').value||'');
+  const msg=$('refundStarsMsg');
+  const btn=$('refundStarsBtn');
+
+  msg.className='promoMsg';
+  if(!userId||!chargeId||!secret){
+    msg.textContent='Заполни User ID, charge ID и секрет.';
+    msg.classList.add('err');
+    return;
+  }
+  if(!confirm('Точно вернуть Telegram Stars по этому платежу?')){
+    return;
+  }
+
+  btn.disabled=true;
+  msg.textContent='Возвращаем Stars…';
+
+  try{
+    const response=await fetch('/api/refund-stars',{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'Authorization':'Bearer '+secret
+      },
+      body:JSON.stringify({
+        user_id:Number(userId),
+        telegram_payment_charge_id:chargeId
+      })
+    });
+
+    let result={};
+    try{ result=await response.json(); }catch(_){}
+
+    if(!response.ok||!result.ok){
+      throw new Error(
+        result?.telegram?.description ||
+        result?.message ||
+        result?.error ||
+        ('HTTP '+response.status)
+      );
+    }
+
+    msg.textContent='Stars успешно возвращены ✅';
+    msg.className='promoMsg ok';
+    $('refundChargeId').value='';
+  }catch(err){
+    msg.textContent='Ошибка: '+err.message;
+    msg.className='promoMsg err';
+  }finally{
+    btn.disabled=false;
+  }
+};
 
 document.querySelectorAll('[data-task-open]').forEach(b=>b.onclick=()=>{const id=b.dataset.taskOpen;const url=id==='channel'?'https://t.me/Liongiftsnews':'https://t.me/Liongiftchat';if(tg&&typeof tg.openTelegramLink==='function')tg.openTelegramLink(url);else window.open(url,'_blank')});
 document.querySelectorAll('[data-task-check]').forEach(b=>b.onclick=async()=>{const id=b.dataset.taskCheck;if(tasks&&tasks[id])return;taskChecking=id;renderTasks();try{const data=await api('check-task','POST',{task:id});applyState(data);alert(data.taskAlready?'Награда уже получена ✅':`Начислено +${Number(data.reward||4)} ⭐ ✅`)}catch(e){if(e.message==='NOT_SUBSCRIBED')alert(id==='channel'?'Сначала подпишитесь на канал @Liongiftsnews':'Сначала вступите в чат @Liongiftchat');else if(e.message==='TASK_CHECK_FAILED')alert('Не удалось проверить подписку. Попробуйте ещё раз.');else alert('Ошибка: '+e.message)}finally{taskChecking='';renderTasks()}});
