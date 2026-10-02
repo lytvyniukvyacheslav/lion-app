@@ -154,6 +154,14 @@ function userKey(id) {
   return `lion:user:${id}`;
 }
 
+function paymentKey(chargeId) {
+  return `lion:payment:${chargeId}`;
+}
+
+function refundKey(chargeId) {
+  return `lion:refund:${chargeId}`;
+}
+
 function withdrawalKey(id) {
   return `lion:withdrawal:${id}`;
 }
@@ -627,21 +635,154 @@ async function creditSuccessfulPayment(payment, fromUserId) {
   const chargeId = String(payment.telegram_payment_charge_id || '');
   if (!chargeId) return false;
 
+  // Keep the Telegram charge ID and payment metadata. Telegram explicitly
+  // requires telegram_payment_charge_id for future Stars refunds.
+  const paymentRecord = {
+    chargeId,
+    userId: parsed.userId,
+    amount: parsed.amount,
+    currency: 'XTR',
+    invoicePayload: String(payment.invoice_payload || ''),
+    createdAt: Date.now(),
+    refundedAt: 0,
+  };
+
   const script = `
     if redis.call('EXISTS', KEYS[1]) == 1 then
       return -1
     end
-    redis.call('SET', KEYS[1], '1')
+    redis.call('SET', KEYS[1], ARGV[2])
+    redis.call('LPUSH', KEYS[3], ARGV[3])
+    redis.call('LTRIM', KEYS[3], 0, 499)
     return redis.call('HINCRBY', KEYS[2], 'balance', ARGV[1])
   `;
 
   await redis([
-    'EVAL', script, 2,
-    `lion:payment:${chargeId}`,
+    'EVAL', script, 3,
+    paymentKey(chargeId),
     userKey(parsed.userId),
+    'lion:payments',
     parsed.amount,
+    JSON.stringify(paymentRecord),
+    chargeId,
   ]);
   return true;
+}
+
+async function getStoredPayment(chargeId) {
+  const raw = await redis(['GET', paymentKey(chargeId)]);
+  if (!raw || raw === '1') return null; // old payments were stored only as a marker
+  try {
+    const payment = JSON.parse(raw);
+    return payment && typeof payment === 'object' ? payment : null;
+  } catch {
+    return null;
+  }
+}
+
+async function listRecentPayments(limit = 50) {
+  limit = Math.max(1, Math.min(100, Math.floor(Number(limit) || 50)));
+  const chargeIds = await redis(['LRANGE', 'lion:payments', 0, limit - 1]);
+  if (!Array.isArray(chargeIds)) return [];
+
+  const payments = [];
+  for (const id of chargeIds) {
+    const chargeId = String(id || '');
+    if (!chargeId) continue;
+    const payment = await getStoredPayment(chargeId);
+    if (payment) payments.push(payment);
+  }
+  return payments;
+}
+
+async function refundStarsPayment(targetUserId, chargeId, fallbackAmount = 0) {
+  targetUserId = Number(targetUserId);
+  chargeId = String(chargeId || '').trim();
+  fallbackAmount = Math.floor(Number(fallbackAmount || 0));
+
+  if (!Number.isSafeInteger(targetUserId) || targetUserId <= 0) {
+    return { error: 'INVALID_USER_ID' };
+  }
+  if (!chargeId) return { error: 'MISSING_TELEGRAM_PAYMENT_CHARGE_ID' };
+
+  const already = await redis(['GET', refundKey(chargeId)]);
+  if (already) return { error: 'ALREADY_REFUNDED' };
+
+  const stored = await getStoredPayment(chargeId);
+  if (stored?.refundedAt) return { error: 'ALREADY_REFUNDED' };
+
+  if (stored?.userId && Number(stored.userId) !== targetUserId) {
+    return { error: 'PAYMENT_USER_MISMATCH' };
+  }
+
+  const amount = Math.floor(Number(stored?.amount || fallbackAmount || 0));
+
+  // Telegram refunds the original Stars transaction using the charge ID.
+  await telegram('refundStarPayment', {
+    user_id: targetUserId,
+    telegram_payment_charge_id: chargeId,
+  });
+
+  const refundedAt = Date.now();
+  const updatedRecord = {
+    ...(stored || {}),
+    chargeId,
+    userId: targetUserId,
+    amount: amount > 0 ? amount : Number(stored?.amount || 0),
+    currency: 'XTR',
+    refundedAt,
+  };
+
+  // If the original amount is known, reverse the same amount from the
+  // internal Lion balance. A negative balance is allowed if the credited
+  // Stars had already been spent; this prevents a refunded payment from
+  // leaving free in-app value behind.
+  if (amount > 0) {
+    const script = `
+      if redis.call('EXISTS', KEYS[1]) == 1 then
+        return cjson.encode({code='ALREADY'})
+      end
+      local balance = tonumber(redis.call('HINCRBY', KEYS[2], 'balance', -tonumber(ARGV[1])))
+      redis.call('SET', KEYS[1], ARGV[2])
+      redis.call('SET', KEYS[3], ARGV[3])
+      return cjson.encode({code='OK', balance=balance})
+    `;
+    const raw = await redis([
+      'EVAL', script, 3,
+      refundKey(chargeId),
+      userKey(targetUserId),
+      paymentKey(chargeId),
+      amount,
+      JSON.stringify({ userId: targetUserId, chargeId, amount, refundedAt }),
+      JSON.stringify(updatedRecord),
+    ]);
+    const result = JSON.parse(raw);
+    return {
+      ok: true,
+      refunded: true,
+      user_id: targetUserId,
+      telegram_payment_charge_id: chargeId,
+      amount,
+      balanceAdjusted: true,
+      balance: Number(result.balance || 0),
+      refundedAt,
+    };
+  }
+
+  // Legacy payment: Telegram can still refund it, but old code did not store
+  // the original top-up amount, so the Lion balance cannot be adjusted unless
+  // the admin supplies `amount` in the request.
+  await redis(['SET', refundKey(chargeId), JSON.stringify({ userId: targetUserId, chargeId, amount: 0, refundedAt })]);
+  if (stored) await redis(['SET', paymentKey(chargeId), JSON.stringify(updatedRecord)]);
+  return {
+    ok: true,
+    refunded: true,
+    user_id: targetUserId,
+    telegram_payment_charge_id: chargeId,
+    amount: 0,
+    balanceAdjusted: false,
+    refundedAt,
+  };
 }
 
 async function updateWithdrawal(requestId, status) {
@@ -1073,6 +1214,30 @@ async function handleAction(request, action) {
 
   if (action === 'state') {
     return reply(await getState(userId));
+  }
+
+  if (action === 'admin-list-payments') {
+    assertAdmin(userId);
+    const url = new URL(request.url);
+    const limit = Number(url.searchParams.get('limit') || 50);
+    return reply({ payments: await listRecentPayments(limit) });
+  }
+
+  if (action === 'admin-refund-stars') {
+    assertAdmin(userId);
+    if (request.method !== 'POST') return reply({ error: 'METHOD' }, 405);
+    const body = await request.json().catch(() => ({}));
+    const result = await refundStarsPayment(
+      body.user_id,
+      body.telegram_payment_charge_id,
+      body.amount,
+    );
+    if (result.error === 'INVALID_USER_ID' || result.error === 'MISSING_TELEGRAM_PAYMENT_CHARGE_ID') {
+      return reply({ error: result.error }, 400);
+    }
+    if (result.error === 'PAYMENT_USER_MISMATCH') return reply({ error: result.error }, 409);
+    if (result.error === 'ALREADY_REFUNDED') return reply({ error: result.error }, 409);
+    return reply(result);
   }
 
   if (action === 'activate-promo') {
