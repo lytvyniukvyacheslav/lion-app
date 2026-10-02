@@ -34,16 +34,17 @@ async function handler(request) {
     return json({ ok: false, error: 'REFUND_ADMIN_SECRET_NOT_CONFIGURED' }, 500);
   }
 
-  const suppliedSecret = getSecret(request);
-  if (!suppliedSecret || suppliedSecret !== REFUND_ADMIN_SECRET) {
-    return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
-  }
-
   let body;
   try {
     body = await request.json();
   } catch {
     return json({ ok: false, error: 'INVALID_JSON' }, 400);
+  }
+
+  const suppliedSecret = getSecret(request) ||
+    (typeof body?.secret === 'string' ? body.secret : '');
+  if (!suppliedSecret || suppliedSecret !== REFUND_ADMIN_SECRET) {
+    return json({ ok: false, error: 'UNAUTHORIZED' }, 401);
   }
 
   const userId = Number(body?.user_id);
